@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"log"
 	"math/rand"
-	"net/http"
 	"strings"
 	"time"
 
@@ -16,9 +13,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
 )
@@ -50,79 +45,38 @@ type Sublog struct {
 	Body        string   `dynamo:"body"`
 }
 
-// MsgSQS SQS に送るメッセージ型
-type MsgSQS struct {
-	ID string `json:"id"`
-}
+var fcn = "upsert"
+var region = "ap-northeast-1"
 
 /*
 HandleRequest S3の PUT イベントにトリガーされ、
 PUT された meta レコードを変換して
 DynamoDB へ UPSERT する
 */
-func HandleRequest(ctx context.Context, event events.S3Event) (string, error) {
-	fmt.Printf("[INFO] event: ")
+func HandleRequest(ctx context.Context, event events.S3Event) error {
+	fmt.Printf("[INFO] event: \n")
 
 	// AWS SDK セッション作成
-	region := "ap-northeast-1"
 	sess := session.Must(session.NewSession())
 
-	// tomlファイル格納バケットを取得
-	secC := secretsmanager.New(sess, aws.NewConfig().WithRegion(region))
-	inputS3 := &secretsmanager.GetSecretValueInput{
-		SecretId:     aws.String("sublog_assets_bucket_name"),
-		VersionStage: aws.String("AWSCURRENT"),
-	}
+	// SecretManager クライアントセットアップ
+	sc := secretsmanager.New(sess, aws.NewConfig().WithRegion(region))
 
-	rSecS3, err := secC.GetSecretValue(inputS3)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
+	// S3 EventNotification から objKey を取得
+	ok := event.Records[0].S3.Object.Key
 
-	sSecS3 := aws.StringValue(rSecS3.SecretString)
-	umSecS3 := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(sSecS3), &umSecS3); err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	s3Sec := umSecS3["name"].(string)
+	// fileName を切り出し
+	fn := strings.Replace(ok, "meta/", "", 1)
+	fn = strings.Replace(fn, ".toml", "", 1)
 
-	// fileName を取得
-	bucketName := s3Sec
-	objectKey := event.Records[0].S3.Object.Key
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	_objectKey := strings.Replace(objectKey, "meta/", "", 1)
-	fileName := strings.Replace(_objectKey, ".toml", "", 1)
+	// バケットから Toml データを取得
+	tb, _ := S3Handler(sc, sess, ok)
 
-	// S3 clientを作成
-	svc := s3.New(sess)
-
-	obj, err := svc.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	fmt.Printf("%v", obj)
-
-	bd := obj.Body
-	defer bd.Close()
-	bb, err := ioutil.ReadAll(bd)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-
-	sb := string(bb)
-
+	// toml ファイルを Config 構造体にマッピング
 	var config Config
-
-	if _, err := toml.Decode(sb, &config); err != nil {
-		fmt.Printf("[ERROR] %v", err)
+	if _, err := toml.Decode(tb, &config); err != nil {
+		log.Printf("[ERROR] %v", err)
 	}
-	s := config
-	fmt.Printf("[INFO] toml: %#v", s)
 
 	// ID, 作成日などのメタ情報を作成
 	u, err := uuid.NewRandom()
@@ -144,130 +98,49 @@ func HandleRequest(ctx context.Context, event events.S3Event) (string, error) {
 	item := Sublog{
 		ID:          uu,
 		CreatedAt:   ts,
-		FileName:    s.Meta.FileName,
-		Category:    s.Meta.Category,
+		FileName:    config.Meta.FileName,
+		Category:    config.Meta.Category,
 		Media:       "sublog",
-		Title:       s.Meta.Title,
+		Title:       config.Meta.Title,
 		EyeCatchURL: slColors[cix],
-		Tag:         s.Meta.Tag,
+		Tag:         config.Meta.Tag,
 		UpdatedAt:   ts,
 	}
-	fmt.Printf("[INFO] item: %#v", item)
-
-	// DynamoDB の設定
-	db := dynamo.New(sess, aws.NewConfig().WithRegion(region))
-	table := db.Table("sublog")
+	fmt.Printf("[INFO] item: %#v\n", item)
 
 	// fileName を元に既存レコードの有無をチェック
-	var recC = Sublog{}
-	ixName := "fileName-index"
-	if err := table.Get("fileName", fileName).Index(ixName).One(&recC); err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	fmt.Printf("[INFO] isUpdateQueryResponseFileName: %#v", recC.FileName)
+	db := dynamo.New(sess, aws.NewConfig().WithRegion(region))
 
-	// 既存レコード存在した場合、一部項目を上書き（作成日など）
-	if recC.ID != "" {
+	var orc Sublog
+	tn := "sublog"
+	ixn := "fileName-index"
+	hk := "fileName"
+
+	table := db.Table(tn)
+	if err := table.Get(hk, fn).Index(ixn).One(&orc); err != nil {
+		log.Printf("[ERROR] %v", err)
+	}
+	fmt.Printf("[INFO] fileName: %v\n", orc.FileName)
+
+	// 既存レコードが存在した場合、一部項目を上書き（作成日など）
+	if orc.ID != "" {
 		p := &item
-		p.ID = recC.ID
-		p.CreatedAt = recC.CreatedAt
-		p.EyeCatchURL = recC.EyeCatchURL
+		p.ID = orc.ID
+		p.CreatedAt = orc.CreatedAt
+		p.EyeCatchURL = orc.EyeCatchURL
 	}
-
 	// PUT処理
 	if err := table.Put(item).Run(); err != nil {
-		fmt.Printf("[ERROR] %v", err)
+		log.Printf("[ERROR] %v", err)
 	}
 
-	// SQS 送信先取得
-	inputSQS := &secretsmanager.GetSecretValueInput{
-		SecretId:     aws.String("sublogHighlighterSQS"),
-		VersionStage: aws.String("AWSCURRENT"),
-	}
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
+	// SQS 関連処理
+	SQSHandler(sc, sess, region, item.ID)
 
-	rSecSQS, err := secC.GetSecretValue(inputSQS)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	sSecSQS := aws.StringValue(rSecSQS.SecretString)
-	umSecSQS := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(sSecSQS), &umSecSQS); err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	sqsSec := umSecSQS["url"].(string)
+	// Slack 通知関連処理
+	NotificationHandler(sc, item.Title, item.FileName)
 
-	// SQS に記事 ID を送信
-	sqsC := sqs.New(sess, aws.NewConfig().WithRegion(region))
-
-	msgSQS := new(MsgSQS)
-	msgSQS.ID = item.ID
-
-	msgJSQS, err := json.Marshal(msgSQS)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	msgBSQS := string(msgJSQS)
-
-	setSQS := &sqs.SendMessageInput{
-		MessageBody: aws.String(msgBSQS),
-		QueueUrl:    aws.String(sqsSec),
-	}
-
-	sqsRes, err := sqsC.SendMessage(setSQS)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	} else {
-		fmt.Print("[INFO] SQSMessageID", *sqsRes.MessageId)
-	}
-
-	// Slack 送信先取得
-	inputSlk := &secretsmanager.GetSecretValueInput{
-		SecretId:     aws.String("sublog_slack_url"),
-		VersionStage: aws.String("AWSCURRENT"),
-	}
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-
-	rSecSlk, err := secC.GetSecretValue(inputSlk)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	sSecSlk := aws.StringValue(rSecSlk.SecretString)
-	umSecSlk := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(sSecSlk), &umSecSlk); err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	slkSec := umSecSlk["url"].(string)
-
-	// Slack 通知処理
-	urlSlk := slkSec
-	jsonStr := `{"channel":"#notification",
-					"username":"webhookbot",
-					"text":"title: ` + item.Title + "\n" + "\n" + `fileName: ` + item.FileName + "\n" + "\n" + `記事を作成しました。",
-					"icon_emoji":"ghost"}`
-	fmt.Printf(jsonStr)
-	req, err := http.NewRequest(
-		"POST",
-		urlSlk,
-		bytes.NewBuffer([]byte(jsonStr)),
-	)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
-	}
-	defer resp.Body.Close()
-
-	return "ok", nil
+	return err
 }
 
 func main() {
