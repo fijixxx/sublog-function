@@ -1,4 +1,4 @@
-package main
+package upsert
 
 import (
 	"context"
@@ -10,12 +10,16 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
+)
+
+const (
+	fcn    = "upsert"
+	region = "ap-northeast-1"
 )
 
 // Config meta.toml 自体を定義
@@ -45,16 +49,13 @@ type Sublog struct {
 	Body        string   `dynamo:"body"`
 }
 
-var fcn = "upsert"
-var region = "ap-northeast-1"
-
 /*
 HandleRequest S3の PUT イベントにトリガーされ、
 PUT された meta レコードを変換して
 DynamoDB へ UPSERT する
 */
 func HandleRequest(ctx context.Context, event events.S3Event) error {
-	fmt.Printf("[INFO] event: \n")
+	fmt.Printf("[INFO] event: %v\n", event)
 
 	// AWS SDK セッション作成
 	sess := session.Must(session.NewSession())
@@ -81,18 +82,15 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	// ID, 作成日などのメタ情報を作成
 	u, err := uuid.NewRandom()
 	if err != nil {
-		fmt.Printf("[ERROR] %v", err)
+		log.Printf("[ERROR] %v", err)
 	}
 	uu := u.String()
 
 	t := time.Now()
 	ts := t.String()
 
-	slColors := []string{
-		"Indianred", "Lightcoral", "Salmon", "Darksalmon", "Lightsalmon", "Crimson", "Red", "Firebrick", "Darkred", "Pink", "Lightpink", "Hotpink", "Deeppink", "Mediumvioletred", "Palevioletred", "Lightsalmon", "Coral", "Tomato", "Orangered", "Darkorange", "Orange", "Gold", "Yellow", "Lightyellow", "Lemonchiffon", "Lightgoldenrodyellow", "Papayawhip", "Moccasin", "Peachpuff", "Palegoldenrod", "Khaki", "Darkkhaki", "Greenyellow", "Chartreuse", "Lawngreen", "Lime", "Limegreen", "Palegreen", "Lightgreen", "Mediumspringgreen", "Springgreen", "Mediumseagreen", "Seagreen", "Forestgreen", "Green", "Darkgreen", "Yellowgreen", "Olivedrab", "Olive", "Darkolivegreen", "Mediumaquamarine", "Darkseagreen", "Lightseagreen", "Darkcyan", "Teal", "Aqua", "Cyan", "Lightcyan", "Paleturquoise", "Aquamarine", "Turquoise", "Mediumturquoise", "Darkturquoise", "Cadetblue", "Steelblue", "Lightsteelblue", "Powderblue", "Lightblue", "Skyblue", "Lightskyblue", "Deepskyblue", "Dodgerblue", "Cornflowerblue", "Mediumslateblue", "Royalblue", "Blue", "Mediumblue", "Darkblue", "Navy", "Midnightblue", "Lavender", "Thistle", "Plum", "Violet", "Orchid", "Fuchsia", "Magenta", "Mediumorchid", "Mediumpurple", "Rebeccapurple", "Blueviolet", "Darkviolet", "Darkorchid", "Darkmagenta", "Purple", "Indigo", "Slateblue", "Darkslateblue", "Mediumslateblue", "Cornsilk", "Blanchedalmond", "Bisque", "Navajowhite", "Wheat", "Burlywood", "Tan", "Rosybrown", "Sandybrown", "Goldenrod", "Darkgoldenrod", "Peru", "Chocolate", "Saddlebrown", "Sienna", "Brown", "Maroon", "Snow", "Honeydew", "Mintcream", "Azure", "Aliceblue", "Ghostwhite", "Whitesmoke", "Seashell", "Beige", "Oldlace", "Floralwhite", "Ivory", "Antiquewhite", "Linen", "Lavenderblush", "Mistyrose", "Gainsboro", "Lightgray", "Silver", "Darkgray", "Gray", "Dimgray", "Lightslategray", "Slategray", "Darkslategray", "Black"}
-
 	rand.Seed(time.Now().UnixNano())
-	cix := rand.Intn(len(slColors) - 1)
+	cix := rand.Intn(len(colorList) - 1)
 
 	// 構造体に toml 変換データと作成したメタデータをマッピング
 	item := Sublog{
@@ -102,7 +100,7 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 		Category:    config.Meta.Category,
 		Media:       "sublog",
 		Title:       config.Meta.Title,
-		EyeCatchURL: slColors[cix],
+		EyeCatchURL: colorList[cix],
 		Tag:         config.Meta.Tag,
 		UpdatedAt:   ts,
 	}
@@ -135,14 +133,10 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	}
 
 	// SQS 関連処理
-	SQSHandler(sc, sess, region, item.ID)
+	SQSHandler(sc, sess, item.ID)
 
 	// Slack 通知関連処理
 	NotificationHandler(sc, item.Title, item.FileName)
 
 	return err
-}
-
-func main() {
-	lambda.Start(HandleRequest)
 }
