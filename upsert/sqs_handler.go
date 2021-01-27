@@ -1,4 +1,4 @@
-package main
+package upsert
 
 import (
 	"log"
@@ -10,7 +10,7 @@ import (
 )
 
 // SQSHandler SQS 関連処理のハンドラー
-func SQSHandler(sc *secretsmanager.SecretsManager, sess *session.Session, region string, iid string) error {
+func SQSHandler(sc *secretsmanager.SecretsManager, sess *session.Session, iid string) error {
 	// SQS 送信先取得
 	sn := "sublogHighlighterSQS"
 	sk := "url"
