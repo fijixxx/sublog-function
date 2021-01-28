@@ -2,8 +2,7 @@ package upsert
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"encoding/json"
 	"math/rand"
 	"strings"
 	"time"
@@ -13,13 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
+	"github.com/fijixxx/sublog-function/common"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
-)
-
-const (
-	fcn    = "upsert"
-	region = "ap-northeast-1"
 )
 
 // Config meta.toml 自体を定義
@@ -51,11 +46,15 @@ type Sublog struct {
 
 /*
 HandleRequest S3の PUT イベントにトリガーされ、
-PUT された meta レコードを変換して
+PUT された meta.toml ファイルを変換して
 DynamoDB へ UPSERT する
 */
 func HandleRequest(ctx context.Context, event events.S3Event) error {
-	fmt.Printf("[INFO] event: %v\n", event)
+	je, err := json.Marshal(event)
+	if err != nil {
+		common.Logger(1, err.Error())
+	}
+	common.Logger(0, "Event: "+string(je))
 
 	// AWS SDK セッション作成
 	sess := session.Must(session.NewSession())
@@ -70,19 +69,22 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	fn := strings.Replace(ok, "meta/", "", 1)
 	fn = strings.Replace(fn, ".toml", "", 1)
 
-	// バケットから Toml データを取得
-	tb, _ := S3Handler(sc, sess, ok)
+	// バケットから toml データを取得
+	tb, err := common.S3BodyGetter(sc, sess, ok)
+	if err != nil {
+		common.Logger(1, err.Error())
+	}
 
-	// toml ファイルを Config 構造体にマッピング
+	// toml ファイルを config Config にマッピング
 	var config Config
 	if _, err := toml.Decode(tb, &config); err != nil {
-		log.Printf("[ERROR] %v", err)
+		common.Logger(1, err.Error())
 	}
 
 	// ID, 作成日などのメタ情報を作成
 	u, err := uuid.NewRandom()
 	if err != nil {
-		log.Printf("[ERROR] %v", err)
+		common.Logger(1, err.Error())
 	}
 	uu := u.String()
 
@@ -92,7 +94,7 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	rand.Seed(time.Now().UnixNano())
 	cix := rand.Intn(len(colorList) - 1)
 
-	// 構造体に toml 変換データと作成したメタデータをマッピング
+	// item に toml 変換データと作成したメタデータをマッピング
 	item := Sublog{
 		ID:          uu,
 		CreatedAt:   ts,
@@ -104,7 +106,6 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 		Tag:         config.Meta.Tag,
 		UpdatedAt:   ts,
 	}
-	fmt.Printf("[INFO] item: %#v\n", item)
 
 	// fileName を元に既存レコードの有無をチェック
 	db := dynamo.New(sess, aws.NewConfig().WithRegion(region))
@@ -116,9 +117,9 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 
 	table := db.Table(tn)
 	if err := table.Get(hk, fn).Index(ixn).One(&orc); err != nil {
-		log.Printf("[ERROR] %v", err)
+		common.Logger(1, err.Error())
 	}
-	fmt.Printf("[INFO] fileName: %v\n", orc.FileName)
+	common.Logger(0, "fileName: "+orc.FileName)
 
 	// 既存レコードが存在した場合、一部項目を上書き（作成日など）
 	if orc.ID != "" {
@@ -127,16 +128,27 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 		p.CreatedAt = orc.CreatedAt
 		p.EyeCatchURL = orc.EyeCatchURL
 	}
+
+	jitem, err := json.Marshal(&item)
+	if err != nil {
+		common.Logger(1, err.Error())
+	}
+	common.Logger(0, "Item: "+string(jitem))
+
 	// PUT処理
 	if err := table.Put(item).Run(); err != nil {
-		log.Printf("[ERROR] %v", err)
+		common.Logger(1, err.Error())
 	}
 
-	// SQS 関連処理
-	SQSHandler(sc, sess, item.ID)
+	// 後続処理用に SQS へメッセージを送信
+	if err := common.SQSPutter(sc, sess, item.ID); err != nil {
+		common.Logger(1, err.Error())
+	}
 
-	// Slack 通知関連処理
-	NotificationHandler(sc, item.Title, item.FileName)
+	// Slack への通知処理
+	if err := common.Notificator(sc, item.Title, item.FileName); err != nil {
+		common.Logger(1, err.Error())
+	}
 
 	return err
 }
