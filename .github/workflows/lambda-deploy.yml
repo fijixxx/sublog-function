@@ -17,8 +17,6 @@ jobs:
 
       - name: Checkout App
         uses: actions/checkout@v2
-        with:
-          path: sublog-function
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -29,13 +27,16 @@ jobs:
 
       - name: Build
         run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/upsert upsert/cmd/lambda/main.go
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/delete delete/cmd/lambda/main.go
-          zip src/lambda/upsert/main.zip src/lambda/upsert/main
-          zip src/lambda/delete/main.zip src/lambda/delete/main
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/upsert/main upsert/cmd/lambda/main.go
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/delete/main delete/cmd/lambda/main.go
+
+      - name: Zip
+        run: |
+          zip -j src/lambda/upsert/main.zip src/lambda/upsert/main
+          zip -j src/lambda/delete/main.zip src/lambda/delete/main
 
       - name: S3 Sync
         env:
           S3_SYNC_BUCKET: ${{ secrets.S3_SRC_BUCKET }}
         run: |
-          aws s3 sync src/lambda s3://$S3_SYNC_BUCKET --delete
+          aws s3 sync src/ s3://$S3_SYNC_BUCKET --delete
