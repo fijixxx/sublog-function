@@ -1,1 +1,3 @@
-*.json
+.old
+.old/*
+src/lambda/*/main*

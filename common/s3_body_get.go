@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/fijixxx/sublog-function/logger"
 )
 
 // S3Params は S3 クライアントに渡すバケット名とオブジェクトキーを含む
@@ -25,6 +26,7 @@ func S3GetBody(s3c *s3.S3, sp *S3Params) (string, error) {
 	bb, err := ioutil.ReadAll(objrc)
 
 	sb := string(bb)
+	logger.Logger(1, "Body: "+sb)
 
 	return sb, err
 }

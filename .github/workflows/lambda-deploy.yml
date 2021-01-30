@@ -1,0 +1,41 @@
+name: lambda-deploy
+
+on:
+  push:
+    branches:
+      - main
+jobs:
+  lambda-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Set up Go 1.13
+        uses: actions/setup-go@v1
+        with:
+          go-version: 1.13
+
+      - name: Checkout App
+        uses: actions/checkout@v2
+        with:
+          path: sublog-function
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      - name: Build
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/upsert upsert/cmd/lambda/main.go
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o src/lambda/delete delete/cmd/lambda/main.go
+          zip src/lambda/upsert/main.zip src/lambda/upsert/main
+          zip src/lambda/delete/main.zip src/lambda/delete/main
+
+      - name: S3 Sync
+        env:
+          S3_SYNC_BUCKET: ${{ secrets.S3_SRC_BUCKET }}
+        run: |
+          aws s3 sync src/lambda s3://$S3_SYNC_BUCKET --delete
