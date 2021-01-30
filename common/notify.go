@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+
+	"github.com/fijixxx/sublog-function/logger"
 )
 
 // SlackPutContent は Slack に送信する内容を含む
@@ -18,9 +20,9 @@ type SlackPutContent struct {
 func Notify(su string, ti string, fn string, err error) error {
 	v := ""
 	if err != nil {
-		v = `"` + fcn + ` の処理でエラーが発生しました",`
+		v = Fcn + ` の処理でエラーが発生しました。`
 	} else {
-		v = `"title: ` + ti + "\n" + "\n" + `fileName: ` + fn + "\n" + "\n" + fcn + ` の処理を完了しました。",`
+		v = `title: ` + ti + "\n" + "\n" + `fileName: ` + fn + "\n" + "\n" + Fcn + ` の処理を完了しました。`
 	}
 
 	b := &SlackPutContent{
@@ -42,7 +44,7 @@ func Notify(su string, ti string, fn string, err error) error {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		Logger(1, err.Error())
+		logger.Logger(1, err.Error())
 	}
 	defer resp.Body.Close()
 

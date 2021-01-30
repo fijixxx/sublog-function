@@ -17,7 +17,7 @@ func S3BodyGetter(sc *secretsmanager.SecretsManager, sess *session.Session, ok s
 	bn, err := SecretGet(sc, sp)
 
 	// S3 から toml ファイルの Body を取得
-	s3c := s3.New(sess, aws.NewConfig().WithRegion(region))
+	s3c := s3.New(sess, aws.NewConfig().WithRegion(Region))
 
 	bp := &S3Params{
 		BucketName: bn,
@@ -25,7 +25,6 @@ func S3BodyGetter(sc *secretsmanager.SecretsManager, sess *session.Session, ok s
 	}
 
 	tb, err := S3GetBody(s3c, bp)
-	Logger(0, "Toml: "+tb)
 
 	return tb, err
 }

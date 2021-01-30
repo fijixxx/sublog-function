@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/fijixxx/sublog-function/common"
+	"github.com/fijixxx/sublog-function/logger"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
 )
@@ -52,15 +53,15 @@ DynamoDB へ UPSERT する
 func HandleRequest(ctx context.Context, event events.S3Event) error {
 	je, err := json.Marshal(event)
 	if err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
-	common.Logger(0, "Event: "+string(je))
+	logger.Logger(1, "Event: "+string(je))
 
 	// AWS SDK セッション作成
 	sess := session.Must(session.NewSession())
 
 	// SecretManager クライアントセットアップ
-	sc := secretsmanager.New(sess, aws.NewConfig().WithRegion(region))
+	sc := secretsmanager.New(sess, aws.NewConfig().WithRegion(common.Region))
 
 	// S3 EventNotification から objKey を取得
 	ok := event.Records[0].S3.Object.Key
@@ -72,19 +73,19 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	// バケットから toml データを取得
 	tb, err := common.S3BodyGetter(sc, sess, ok)
 	if err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 
 	// toml ファイルを config Config にマッピング
 	var config Config
 	if _, err := toml.Decode(tb, &config); err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 
 	// ID, 作成日などのメタ情報を作成
 	u, err := uuid.NewRandom()
 	if err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 	uu := u.String()
 
@@ -108,7 +109,7 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	}
 
 	// fileName を元に既存レコードの有無をチェック
-	db := dynamo.New(sess, aws.NewConfig().WithRegion(region))
+	db := dynamo.New(sess, aws.NewConfig().WithRegion(common.Region))
 
 	var orc Sublog
 	tn := "sublog"
@@ -117,9 +118,9 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 
 	table := db.Table(tn)
 	if err := table.Get(hk, fn).Index(ixn).One(&orc); err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
-	common.Logger(0, "fileName: "+orc.FileName)
+	logger.Logger(1, "fileName: "+orc.FileName)
 
 	// 既存レコードが存在した場合、一部項目を上書き（作成日など）
 	if orc.ID != "" {
@@ -131,23 +132,23 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 
 	jitem, err := json.Marshal(&item)
 	if err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
-	common.Logger(0, "Item: "+string(jitem))
+	logger.Logger(1, "Item: "+string(jitem))
 
 	// PUT処理
 	if err := table.Put(item).Run(); err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 
 	// 後続処理用に SQS へメッセージを送信
 	if err := common.SQSPutter(sc, sess, item.ID); err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 
 	// Slack への通知処理
 	if err := common.Notificator(sc, item.Title, item.FileName); err != nil {
-		common.Logger(1, err.Error())
+		logger.Logger(2, err.Error())
 	}
 
 	return err

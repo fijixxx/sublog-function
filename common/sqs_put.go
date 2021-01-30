@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/fijixxx/sublog-function/logger"
 )
 
 // MsgSQS SQS に送るメッセージ型
@@ -20,7 +21,7 @@ type SQSParams struct {
 
 // SQSPut SQS へメッセージ送信
 func SQSPut(qc *sqs.SQS, sp *SQSParams) error {
-	qm, err := json.Marshal(&sp.Message.ID)
+	qm, err := json.Marshal(&sp.Message)
 	sqm := string(qm)
 	setSQS := &sqs.SendMessageInput{
 		MessageBody: aws.String(sqm),
@@ -28,7 +29,7 @@ func SQSPut(qc *sqs.SQS, sp *SQSParams) error {
 	}
 
 	sqsRes, err := qc.SendMessage(setSQS)
-	Logger(0, "SQSMessageID: "+*sqsRes.MessageId)
+	logger.Logger(1, "SQSMessageID: "+*sqsRes.MessageId)
 
 	return err
 }

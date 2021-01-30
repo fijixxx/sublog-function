@@ -24,7 +24,7 @@ func SQSPutter(sc *secretsmanager.SecretsManager, sess *session.Session, iid str
 		SQSUrl:  qu,
 		Message: *msg,
 	}
-	qc := sqs.New(sess, aws.NewConfig().WithRegion(region))
+	qc := sqs.New(sess, aws.NewConfig().WithRegion(Region))
 	err = SQSPut(qc, qp)
 
 	return err

@@ -1,4 +1,4 @@
-package common
+package logger
 
 import (
 	"encoding/json"
@@ -10,7 +10,8 @@ import (
 type Level int
 
 const (
-	in Level = iota
+	de Level = iota
+	in
 	er
 )
 
@@ -18,6 +19,8 @@ const (
 func Logger(l Level, e string) {
 	sl := ""
 	switch l {
+	case de:
+		sl = "[DEBUG]"
 	case in:
 		sl = "[INFO]"
 	case er:
