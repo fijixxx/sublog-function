@@ -19,16 +19,32 @@ type SQSParams struct {
 	Message MsgSQS
 }
 
+// Que は SQSへの操作関数を持つ
+type Que interface {
+	SQSPut(p *SQSParams) error
+}
+
+// NewQue は SQS 操作用の que 構造体を返す
+func NewQue(qc *sqs.SQS) Que {
+	return &que{
+		client: qc,
+	}
+}
+
+type que struct {
+	client *sqs.SQS
+}
+
 // SQSPut SQS へメッセージ送信
-func SQSPut(qc *sqs.SQS, sp *SQSParams) error {
-	qm, err := json.Marshal(&sp.Message)
+func (q *que) SQSPut(p *SQSParams) error {
+	qm, err := json.Marshal(&p.Message)
 	sqm := string(qm)
 	setSQS := &sqs.SendMessageInput{
 		MessageBody: aws.String(sqm),
-		QueueUrl:    aws.String(sp.SQSUrl),
+		QueueUrl:    aws.String(p.SQSUrl),
 	}
 
-	sqsRes, err := qc.SendMessage(setSQS)
+	sqsRes, err := q.client.SendMessage(setSQS)
 	logger.Logger(1, "SQSMessageID: "+*sqsRes.MessageId)
 
 	return err

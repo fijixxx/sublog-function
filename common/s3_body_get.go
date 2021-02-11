@@ -14,19 +14,45 @@ type S3Params struct {
 	ObjectKey  string
 }
 
-// S3GetBody は バケット名とオブジェクトキーからオブジェクトを取得して String の Body を返す
-func S3GetBody(s3c *s3.S3, sp *S3Params) (string, error) {
-	obj, err := s3c.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(sp.BucketName),
-		Key:    aws.String(sp.ObjectKey),
-	})
+// S3Client は S3 への取得処理を行う
+type S3Client interface {
+	SetParams(p *S3Params) *s3.GetObjectInput
+	SetBody(i *s3.GetObjectInput) ([]byte, error)
+	GetBody(b []byte) string
+}
 
+// NewS3Client は 新しい S3 クライアントを返す
+func NewS3Client(c *s3.S3) S3Client {
+	return &s3client{
+		client: c,
+	}
+}
+
+type s3client struct {
+	client *s3.S3
+}
+
+func (c *s3client) SetParams(p *S3Params) *s3.GetObjectInput {
+	return &s3.GetObjectInput{
+		Bucket: aws.String(p.BucketName),
+		Key:    aws.String(p.ObjectKey),
+	}
+}
+
+func (c *s3client) SetBody(i *s3.GetObjectInput) ([]byte, error) {
+	obj, err := c.client.GetObject(i)
+	if err != nil {
+		return nil, err
+	}
 	objrc := obj.Body
 	defer objrc.Close()
+
 	bb, err := ioutil.ReadAll(objrc)
+	return bb, err
+}
 
-	sb := string(bb)
+func (c *s3client) GetBody(b []byte) string {
+	sb := string(b)
 	logger.Logger(1, "Body: "+sb)
-
-	return sb, err
+	return sb
 }

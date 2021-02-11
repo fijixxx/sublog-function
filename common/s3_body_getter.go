@@ -14,7 +14,16 @@ func S3BodyGetter(sc *secretsmanager.SecretsManager, sess *session.Session, ok s
 		SName:     "sublog_assets_bucket_name",
 		SecretKey: "name",
 	}
-	bn, err := SecretGet(sc, sp)
+	svc := NewSecretClient(sc)
+	si := svc.SetParams(sp)
+	ss, err := svc.SetSecretString(si)
+	if err != nil {
+		return "", err
+	}
+	bn, err := svc.GetSecret(ss, sp)
+	if err != nil {
+		return "", err
+	}
 
 	// S3 から toml ファイルの Body を取得
 	s3c := s3.New(sess, aws.NewConfig().WithRegion(Region))
@@ -24,7 +33,13 @@ func S3BodyGetter(sc *secretsmanager.SecretsManager, sess *session.Session, ok s
 		ObjectKey:  ok,
 	}
 
-	tb, err := S3GetBody(s3c, bp)
+	c := NewS3Client(s3c)
+	sip := c.SetParams(bp)
+	sb, err := c.SetBody(sip)
+	if err != nil {
+		return "", err
+	}
+	tb := c.GetBody(sb)
 
-	return tb, err
+	return tb, nil
 }
