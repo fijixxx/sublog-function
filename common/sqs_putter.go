@@ -14,7 +14,16 @@ func SQSPutter(sc *secretsmanager.SecretsManager, sess *session.Session, iid str
 		SName:     "sublogHighlighterSQS",
 		SecretKey: "url",
 	}
-	qu, err := SecretGet(sc, sp)
+	svc := NewSecretClient(sc)
+	si := svc.SetParams(sp)
+	ss, err := svc.SetSecretString(si)
+	if err != nil {
+		return err
+	}
+	qu, err := svc.GetSecret(ss, sp)
+	if err != nil {
+		return err
+	}
 
 	// SQS に記事 ID を送信
 	msg := &MsgSQS{
@@ -24,8 +33,8 @@ func SQSPutter(sc *secretsmanager.SecretsManager, sess *session.Session, iid str
 		SQSUrl:  qu,
 		Message: *msg,
 	}
-	qc := sqs.New(sess, aws.NewConfig().WithRegion(Region))
-	err = SQSPut(qc, qp)
+	q := NewQue(sqs.New(sess, aws.NewConfig().WithRegion(Region)))
+	err = q.SQSPut(qp)
 
 	return err
 }

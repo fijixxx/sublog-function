@@ -11,7 +11,16 @@ func Notificator(sc *secretsmanager.SecretsManager, it string, fn string) error 
 		SName:     "sublog_slack_url",
 		SecretKey: "url",
 	}
-	su, err := SecretGet(sc, sp)
+	svc := NewSecretClient(sc)
+	si := svc.SetParams(sp)
+	ss, err := svc.SetSecretString(si)
+	if err != nil {
+		return err
+	}
+	su, err := svc.GetSecret(ss, sp)
+	if err != nil {
+		return err
+	}
 
 	// Slack 通知処理
 	err = Notify(su, it, fn, err)
