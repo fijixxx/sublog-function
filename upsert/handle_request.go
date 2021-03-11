@@ -26,7 +26,6 @@ type Config struct {
 // Meta meta.toml の中身
 type Meta struct {
 	Category string   `toml:"category"`
-	FileName string   `toml:"fileName"`
 	Tag      []string `toml:"tag"`
 	Title    string   `toml:"title"`
 }
@@ -99,7 +98,7 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	item := Sublog{
 		ID:          uu,
 		CreatedAt:   ts,
-		FileName:    config.Meta.FileName,
+		FileName:    fn,
 		Category:    config.Meta.Category,
 		Media:       "sublog",
 		Title:       config.Meta.Title,
@@ -109,18 +108,19 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	}
 
 	// fileName を元に既存レコードの有無をチェック
-	db := dynamo.New(sess, aws.NewConfig().WithRegion(common.Region))
+	dbc := dynamo.New(sess, aws.NewConfig().WithRegion(common.Region))
 
-	var orc Sublog
-	tn := "sublog"
-	ixn := "fileName-index"
-	hk := "fileName"
+	dfr := &DBFrom{
+		TableName: "sublog",
+		IndexName: "fileName-index",
+		HashKey:   "fileName",
+	}
 
-	table := db.Table(tn)
-	if err := table.Get(hk, fn).Index(ixn).One(&orc); err != nil {
+	db := NewDB(dbc)
+	orc, err := db.DynamoCheckRecord(dfr, fn)
+	if err != nil {
 		logger.Logger(2, err.Error())
 	}
-	logger.Logger(1, "fileName: "+orc.FileName)
 
 	// 既存レコードが存在した場合、一部項目を上書き（作成日など）
 	if orc.ID != "" {
@@ -137,7 +137,7 @@ func HandleRequest(ctx context.Context, event events.S3Event) error {
 	logger.Logger(1, "Item: "+string(jitem))
 
 	// PUT処理
-	if err := table.Put(item).Run(); err != nil {
+	if err := db.DynamoPut(dfr, &item); err != nil {
 		logger.Logger(2, err.Error())
 	}
 
